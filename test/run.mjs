@@ -79,15 +79,23 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', ...extra });
   fs.createReadStream(file).pipe(res);
 });
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const origin = `http://127.0.0.1:${server.address().port}`;
-console.log('serving', SITE, 'at', origin, 'with', EXE);
+// SILLYCAM_URL=https://host/path runs the same checks against a deployed copy instead of site/.
+const REMOTE = (process.env.SILLYCAM_URL || '').replace(/\/$/, '');
+let origin;
+if (REMOTE) {
+  origin = REMOTE;
+  console.log('testing the live site at', origin, 'with', EXE);
+} else {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  origin = `http://127.0.0.1:${server.address().port}`;
+  console.log('serving', SITE, 'at', origin, 'with', EXE);
+}
 
 // ---- step 1: icons and the fake-camera clip, rendered by Chromium's canvas
 const b0 = await chromium.launch({ executablePath: EXE, headless: true });
 const p0 = await b0.newPage();
 await p0.goto(origin + '/');
-for (const size of [512, 192, 180]) {
+for (const size of REMOTE ? [] : [512, 192, 180]) {
   const dataUrl = await p0.evaluate((size) => {
     const c = document.createElement('canvas'); c.width = c.height = size;
     const x = c.getContext('2d');
@@ -197,11 +205,12 @@ const sw = await page.evaluate(async () => {
 console.log('service worker:', JSON.stringify(sw));
 if (!sw.ready || sw.cache === 'incomplete') problems.push('service worker cache incomplete: ' + JSON.stringify(sw));
 
-const foreign = [...requests].filter((u) => !u.startsWith(origin) && !u.startsWith('blob:' + origin) && !u.startsWith('data:'));
+const siteOrigin = new URL(origin).origin;   // blob: URLs carry the origin only, never the path
+const foreign = [...requests].filter((u) => !u.startsWith(origin) && !u.startsWith('blob:' + siteOrigin) && !u.startsWith('data:'));
 if (foreign.length) problems.push('foreign requests: ' + foreign.join(', '));
 console.log('requests:', requests.size, 'foreign:', foreign.length);
 
 await browser.close();
-server.close();
+if (!REMOTE) server.close();
 if (problems.length) { console.log('\nPROBLEMS:'); for (const p of problems) console.log(' -', p); process.exit(1); }
 console.log('\nALL CHECKS PASSED');

@@ -25,16 +25,13 @@ The check needs the Chromium that Playwright installs under `%LOCALAPPDATA%\ms-p
 
 ## Deploy (GitHub Pages, static)
 
-`.github/workflows/pages.yml` publishes `site/` on every push to `main`. First-time setup (outward-facing,
-Kelly's go needed; the repo must be public on a free GitHub plan):
+Live since 2026-11-07 at `https://kellyb145.github.io/silly-cam/` from the public repo
+`github.com/kellyb145/silly-cam`. `.github/workflows/pages.yml` publishes `site/` on every push to `main`,
+so a deploy is: edit, bump `VERSION` in `site/sw.js`, run the test, commit, `git push`. Check the run with
+`gh run list -R kellyb145/silly-cam`. To check a deployed copy end to end:
+`SILLYCAM_URL=https://kellyb145.github.io/silly-cam node test/run.mjs`.
 
-```bash
-git init -b main && git add -A && git commit -m "Silly Cam"
-gh repo create silly-cam --public --source . --push
-gh api -X POST repos/kellyb145/silly-cam/pages -f build_type=workflow
-```
-
-The page then lives at `https://kellyb145.github.io/silly-cam/`. All paths in `site/` are relative, so the
+All paths in `site/` are relative, so the
 subfolder URL is fine. GitHub Pages cannot send headers, so the Content-Security-Policy lives in a
 `<meta http-equiv>` tag in `index.html` as well as in `site/_headers` (the latter only matters on Netlify,
 which also works: `netlify deploy --prod --dir site`).
