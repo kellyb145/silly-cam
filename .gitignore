@@ -1,5 +1,5 @@
 test/node_modules/
-test/shots/
-test/face.mjpeg
+test/shots*/
+test/*.mjpeg
 test/portrait.jpg
 .netlify/
