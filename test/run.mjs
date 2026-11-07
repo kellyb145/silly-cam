@@ -16,7 +16,13 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SITE = path.resolve(HERE, '..', 'site');
-const SHOTS = path.join(HERE, 'shots');
+// SILLYCAM_SHOTS: screenshot folder (default test/shots). SILLYCAM_FILTERS: comma list of filter ids
+// to exercise (default all). SILLYCAM_FACES=2: put two copies of the portrait in the fake camera frame.
+// SILLYCAM_VARIANTS=1: also screenshot every variant of filters that have them (<id>-v<N>.png).
+const SHOTS = process.env.SILLYCAM_SHOTS ? path.resolve(process.env.SILLYCAM_SHOTS) : path.join(HERE, 'shots');
+const ONLY = (process.env.SILLYCAM_FILTERS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const FACES = Number(process.env.SILLYCAM_FACES || 1);
+const VARIANTS = process.env.SILLYCAM_VARIANTS === '1';
 const PORTRAIT = path.join(HERE, 'portrait.jpg');
 const PORTRAIT_URL = 'https://storage.googleapis.com/mediapipe-assets/portrait.jpg';
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -95,7 +101,7 @@ if (REMOTE) {
 const b0 = await chromium.launch({ executablePath: EXE, headless: true });
 const p0 = await b0.newPage();
 await p0.goto(origin + '/');
-for (const size of REMOTE ? [] : [512, 192, 180]) {
+for (const size of REMOTE ? [] : [512, 192, 180].filter((s) => !fs.existsSync(path.join(SITE, 'icons', `icon-${s}.png`)))) {
   const dataUrl = await p0.evaluate((size) => {
     const c = document.createElement('canvas'); c.width = c.height = size;
     const x = c.getContext('2d');
@@ -113,20 +119,35 @@ for (const size of REMOTE ? [] : [512, 192, 180]) {
   }, size);
   fs.writeFileSync(path.join(SITE, 'icons', `icon-${size}.png`), Buffer.from(dataUrl.split(',')[1], 'base64'));
 }
-const portraitB64 = fs.readFileSync(PORTRAIT).toString('base64');
-const frameUrl = await p0.evaluate(async (b64) => {
-  const img = new Image(); img.src = 'data:image/jpeg;base64,' + b64; await img.decode();
-  const c = document.createElement('canvas'); c.width = 640; c.height = 800;
-  const x = c.getContext('2d');
-  const s = Math.max(640 / img.width, 800 / img.height);
-  const w = img.width * s, h = img.height * s;
-  x.drawImage(img, (640 - w) / 2, (800 - h) / 2, w, h);
-  return c.toDataURL('image/jpeg', 0.92);
-}, portraitB64);
-const frame = Buffer.from(frameUrl.split(',')[1], 'base64');
-const mjpeg = path.join(HERE, 'face.mjpeg');
-fs.writeFileSync(mjpeg, Buffer.concat(Array(60).fill(frame)));
-console.log('icons written; fake camera clip', mjpeg, frame.length, 'bytes/frame');
+const mjpeg = path.join(HERE, FACES === 2 ? 'faces2.mjpeg' : 'face.mjpeg');
+if (!fs.existsSync(mjpeg)) {
+  const portraitB64 = fs.readFileSync(PORTRAIT).toString('base64');
+  const frameUrl = await p0.evaluate(async ({ b64, faces }) => {
+    const img = new Image(); img.src = 'data:image/jpeg;base64,' + b64; await img.decode();
+    const c = document.createElement('canvas'); c.width = 640; c.height = 800;
+    const x = c.getContext('2d');
+    x.fillStyle = '#556'; x.fillRect(0, 0, 640, 800);
+    if (faces === 2) {
+      // two people sharing the frame: the second one mirrored and a little smaller, like two kids
+      // leaning into a selfie; faces are roughly a quarter of the frame width each
+      const s = 560 / img.height, w = img.width * s, h = 560;
+      x.drawImage(img, -40, 120, w, h);
+      x.save(); x.translate(640, 0); x.scale(-1, 1);
+      x.drawImage(img, -20, 230, w * 0.9, h * 0.9);
+      x.restore();
+    } else {
+      const s = Math.max(640 / img.width, 800 / img.height);
+      const w = img.width * s, h = img.height * s;
+      x.drawImage(img, (640 - w) / 2, (800 - h) / 2, w, h);
+    }
+    return c.toDataURL('image/jpeg', 0.92);
+  }, { b64: portraitB64, faces: FACES });
+  const frame = Buffer.from(frameUrl.split(',')[1], 'base64');
+  const tmp = mjpeg + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, Buffer.concat(Array(60).fill(frame)));
+  fs.renameSync(tmp, mjpeg);
+  console.log('fake camera clip written', mjpeg, frame.length, 'bytes/frame');
+}
 await b0.close();
 
 // ---- step 2: the real run with a fake camera
@@ -161,21 +182,35 @@ console.log('model:', JSON.stringify(model));
 if (model.status !== 'ready') problems.push('face model status ' + model.status);
 
 const results = [];
-const filters = await page.evaluate(() => window.__sillycam.filters);
+const allFilters = await page.evaluate(() => window.__sillycam.filters);
+const unknown = ONLY.filter((id) => !allFilters.includes(id));
+if (unknown.length) problems.push('unknown filter ids requested: ' + unknown.join(', '));
+const filters = ONLY.length ? allFilters.filter((id) => ONLY.includes(id)) : allFilters;
+const variantCounts = await page.evaluate(() => Object.fromEntries(window.__sillycam.variantCounts()));
 for (const id of filters) {
   await page.evaluate((id) => window.__sillycam.setFilter(id), id);
   const f0 = await page.evaluate(() => window.__sillycam.debug.frames);
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(id.startsWith('game') ? 5500 : 700);   // games count down ~3 s before play starts
   const r = await page.evaluate((id) => ({ id, faces: window.__sillycam.faceCount(), frames: window.__sillycam.debug.frames }), id);
   r.framesDrawn = r.frames - f0;
   results.push(r);
   await page.screenshot({ path: path.join(SHOTS, `${id}.png`) });
+  if (VARIANTS && variantCounts[id] > 1) {
+    for (let v = 1; v < variantCounts[id]; v++) {
+      await page.evaluate(() => window.__sillycam.nextVariant());
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(SHOTS, `${id}-v${v}.png`) });
+    }
+    await page.evaluate(() => window.__sillycam.nextVariant());   // back to variant 0
+  }
 }
 console.table(results.map((r) => ({ id: r.id, faces: r.faces, frames: r.framesDrawn })));
-const faceIds = ['puppy', 'kitty', 'bunny', 'shades', 'crown', 'rainbow', 'bigeyes', 'bighead'];
+const faceIds = ['puppy', 'kitty', 'bunny', 'shades', 'crown', 'rainbow', 'bigeyes', 'bighead',
+  'fox', 'catface', 'tiger', 'panda', 'lion', 'dogface', 'grandpa', 'grandma', 'baby', 'wigs', 'haircolor'];
 for (const r of results) {
-  if (r.framesDrawn < 5) problems.push(`filter ${r.id} drew only ${r.framesDrawn} frames in 0.7 s`);
+  if (r.framesDrawn < 5) problems.push(`filter ${r.id} drew only ${r.framesDrawn} frames`);
   if (faceIds.includes(r.id) && r.faces < 1) problems.push(`filter ${r.id} found no face`);
+  if (faceIds.includes(r.id) && FACES === 2 && r.faces < 2) problems.push(`filter ${r.id} found ${r.faces} face(s) with two in frame`);
 }
 
 // photo flow
@@ -195,7 +230,7 @@ const sw = await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     for (let i = 0; i < 60; i++) {
       const keys = await caches.keys();
-      if (keys.length) { const c = await caches.open(keys[0]); const ks = await c.keys(); if (ks.length >= 12) return { ready: true, cache: keys[0], entries: ks.length }; }
+      if (keys.length) { const c = await caches.open(keys[0]); const ks = await c.keys(); if (ks.length >= 18) return { ready: true, cache: keys[0], entries: ks.length }; }
       await new Promise((r) => setTimeout(r, 500));
     }
     return { ready: true, cache: 'incomplete' };

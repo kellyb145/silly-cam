@@ -1,13 +1,16 @@
 // Silly Cam offline cache. Bump VERSION whenever any file changes so devices pick up the update.
 // Kill switch: to retire the cache on every device, deploy an sw.js whose install handler calls
 // self.registration.unregister() and deletes all caches (see README).
-const VERSION = 'silly-cam-v1';
+const VERSION = 'silly-cam-v2';
 const NETWORK_TIMEOUT_MS = 3000;
-const SMALL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest'];
+const SMALL = [
+  './', './index.html', './style.css', './app.js', './draw.js', './games.js',
+  './filters-animals.js', './filters-age.js', './filters-wigs.js', './manifest.webmanifest',
+];
 const BIG = [
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
   './vendor/vision_bundle.js', './vendor/vision_wasm_internal.js',
-  './vendor/vision_wasm_internal.wasm', './vendor/face_landmarker.task',
+  './vendor/vision_wasm_internal.wasm', './vendor/face_landmarker.task', './vendor/hair_segmenter.tflite',
 ];
 
 self.addEventListener('install', (e) => {

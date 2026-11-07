@@ -4,6 +4,19 @@
 // The MediaPipe bundle is imported lazily inside loadModel() so that a failure to load it
 // never stops the camera or the whole-picture filters from working.
 
+import { TAU, ellipse, circle, poly, rrect, line, emoji, zoomPatch, star } from './draw.js';
+
+// Filter packs live in their own files. Each is optional: a pack that fails to load is skipped
+// (with a console warning) and the rest of the page keeps working.
+async function pack(file, name) {
+  try { return (await import(file))[name] || []; }
+  catch (e) { console.warn('filter pack unavailable:', file, e); return []; }
+}
+const ANIMALS = await pack('./filters-animals.js', 'ANIMALS');
+const GAMES = await pack('./games.js', 'GAMES');
+const AGE = await pack('./filters-age.js', 'AGE');
+const WIGS = await pack('./filters-wigs.js', 'WIGS');
+
 const $ = (id) => document.getElementById(id);
 const video = $('cam');
 const canvas = $('stage');
@@ -19,6 +32,10 @@ const state = {
   stream: null,
   landmarker: null,
   modelStatus: 'idle',      // idle | loading | ready | failed
+  segmenter: null,
+  segStatus: 'idle',        // the hair model loads only when a hair filter is first picked
+  variants: new Map(),      // filter id -> chosen variant index
+  variantHintShown: false,
   filterIndex: 0,
   lastVideoTime: -1,
   faces: [],
@@ -28,92 +45,9 @@ const state = {
   cameraCount: 0,
 };
 const particles = [];
-const TAU = Math.PI * 2;
 
-// ---------------------------------------------------------------- drawing helpers
-// Face props are drawn in "face units": origin between the eyes, +x toward image-right,
-// +y downward, 1 unit = face width (cheek to cheek). The context is already translated,
-// rotated to the head tilt and scaled, so sizes below are fractions of the face width.
-
-function ellipse(c, x, y, rx, ry, rot, fill, stroke, lw) {
-  c.beginPath();
-  c.ellipse(x, y, rx, ry, rot || 0, 0, TAU);
-  if (fill) { c.fillStyle = fill; c.fill(); }
-  if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 0.02; c.stroke(); }
-}
-function circle(c, x, y, r, fill, stroke, lw) { ellipse(c, x, y, r, r, 0, fill, stroke, lw); }
-function poly(c, pts, fill, stroke, lw) {
-  c.beginPath();
-  pts.forEach((p, i) => (i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])));
-  c.closePath();
-  if (fill) { c.fillStyle = fill; c.fill(); }
-  if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 0.02; c.stroke(); }
-}
-function rrect(c, x, y, w, h, r, fill, stroke, lw) {
-  r = Math.min(r, w / 2, h / 2);
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
-  c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r);
-  c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y);
-  c.closePath();
-  if (fill) { c.fillStyle = fill; c.fill(); }
-  if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 0.02; c.stroke(); }
-}
-function line(c, x1, y1, x2, y2, stroke, lw) {
-  c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
-  c.strokeStyle = stroke; c.lineWidth = lw; c.stroke();
-}
-// Emoji text inside the scaled face frame: undo the scale so font sizes stay sane.
-function emoji(c, g, txt, x, y, size) {
-  c.save();
-  c.translate(x, y);
-  c.scale(1 / g.s, 1 / g.s);
-  c.font = `${Math.round(size * g.s)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
-  c.textAlign = 'center';
-  c.textBaseline = 'middle';
-  c.fillStyle = '#000';
-  c.fillText(txt, 0, 0);
-  c.restore();
-}
-// Copy a region of the live video into the face frame, scaled by k around a local point.
-// The copy is axis-aligned in video space, so it is drawn in a counter-rotated frame.
-function zoomPatch(c, g, lx, ly, rx, ry, k, shape) {
-  const gp = g.global(lx, ly);
-  const sw = (rx * g.s) / k, sh = (ry * g.s) / k;
-  // Clamp the source rectangle to the frame (some browsers draw nothing for an out-of-bounds
-  // source) and shrink the destination to match.
-  const VW = video.videoWidth, VH = video.videoHeight;
-  const sx0 = Math.max(0, gp.x - sw), sy0 = Math.max(0, gp.y - sh);
-  const sx1 = Math.min(VW, gp.x + sw), sy1 = Math.min(VH, gp.y + sh);
-  if (sx1 <= sx0 || sy1 <= sy0) return;
-  const fx = rx / sw, fy = ry / sh;                       // destination units per source pixel
-  const dx0 = -rx + (sx0 - (gp.x - sw)) * fx, dy0 = -ry + (sy0 - (gp.y - sh)) * fy;
-  c.save();
-  c.translate(lx, ly);
-  c.rotate(-g.angle);
-  c.beginPath();
-  if (shape === 'circle') c.arc(0, 0, rx, 0, TAU); else c.ellipse(0, 0, rx, ry, 0, 0, TAU);
-  c.clip();
-  c.drawImage(video, sx0, sy0, sx1 - sx0, sy1 - sy0, dx0, dy0, (sx1 - sx0) * fx, (sy1 - sy0) * fy);
-  c.restore();
-}
-function star(c, x, y, r, rot, color, alpha) {
-  c.save();
-  c.translate(x, y); c.rotate(rot);
-  c.globalAlpha = alpha;
-  c.fillStyle = color;
-  c.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const rad = i % 2 ? r * 0.38 : r;
-    const a = (i / 8) * TAU;
-    const px = Math.cos(a) * rad, py = Math.sin(a) * rad;
-    if (i) c.lineTo(px, py); else c.moveTo(px, py);
-  }
-  c.closePath(); c.fill();
-  c.restore();
-}
+// Drawing helpers (ellipse, poly, zoomPatch, …) live in draw.js; see its header for the
+// face-unit coordinate system every face filter draws in.
 
 // ---------------------------------------------------------------- particles (canvas pixels)
 function spawn(p) { if (particles.length < 220) particles.push(p); }
@@ -151,6 +85,8 @@ function confetti() {
   }
 }
 
+const FX = { sparkleAt, confetti, spawn };
+
 // ---------------------------------------------------------------- face geometry
 const avgOf = (lm, idx, W, H) => {
   let x = 0, y = 0;
@@ -177,7 +113,7 @@ function faceGeometry(lm, W, H) {
   const lipTop = P(13), lipBot = P(14), mL = P(61), mR = P(291);
   const open = Math.hypot(lipBot.x - lipTop.x, lipBot.y - lipTop.y) / s;
   return {
-    s, angle, mid, local, global, W, H,
+    s, angle, mid, local, global, W, H, video, fx: FX,
     eyeA: local(eA), eyeB: local(eB),
     nose: local(avgOf(lm, [1, 4], W, H)),
     lipTop: local(lipTop),
@@ -510,35 +446,102 @@ const WORLD = {
   },
 };
 
+const HAIR_COLOURS = [
+  ['Pink', '#ff4fa3'], ['Blue', '#2f7bff'], ['Purple', '#8a3cff'], ['Green', '#2ecc71'],
+  ['Red', '#ff2d2d'], ['Blonde', '#ffd76a'], ['White', '#f4f4f4'], ['Rainbow', null],
+];
+const HAIR_FILTER = {
+  id: 'haircolor', name: 'Hair Colour', icon: '🎨', segment: true,
+  variants: HAIR_COLOURS.map((h) => h[0]),
+  scene(c, geoms, t, dt, W, H, v, env) {
+    if (!env.hair) { if (state.segStatus === 'loading') env.hud('Getting the hair magic ready…'); return; }
+    env.hud('');
+    const m = env.hair;
+    // Build a coloured copy of the mask, then blend it onto the picture so only hair changes.
+    const tint = document.createElement('canvas'); tint.width = m.w; tint.height = m.h;
+    const tc = tint.getContext('2d');
+    tc.drawImage(m.canvas, 0, 0);
+    tc.globalCompositeOperation = 'source-in';
+    const colour = HAIR_COLOURS[v][1];
+    if (colour) tc.fillStyle = colour;
+    else {
+      const grad = tc.createLinearGradient(0, 0, m.w, m.h);
+      ['#ff2d2d', '#ff9100', '#ffea00', '#00e676', '#00b0ff', '#8a3cff'].forEach((col, i, arr) => grad.addColorStop(((i / (arr.length - 1)) + t * 0.1) % 1, col));
+      tc.fillStyle = grad;
+    }
+    tc.fillRect(0, 0, m.w, m.h);
+    c.imageSmoothingEnabled = true;
+    c.globalCompositeOperation = 'color';
+    c.drawImage(tint, 0, 0, W, H);
+    c.globalCompositeOperation = 'soft-light';
+    c.globalAlpha = 0.6;
+    c.drawImage(tint, 0, 0, W, H);
+    c.globalAlpha = 1;
+    c.globalCompositeOperation = 'source-over';
+  },
+};
+
+// Filters are grouped; the tab row above the chip strip jumps to a group's first filter.
+const GROUPS = [
+  ['animals', '🐾', 'Animals'],
+  ['silly', '🎉', 'Silly'],
+  ['games', '🎮', 'Games'],
+  ['looks', '💇', 'Looks'],
+  ['effects', '🌈', 'Effects'],
+];
+const tag = (list, group) => list.map((f) => ({ ...f, group }));
 const FILTERS = [
   { id: 'normal', name: 'Just Me', icon: '🙂' },
-  { id: 'puppy', name: 'Puppy', icon: '🐶', face: FACE.puppy },
-  { id: 'kitty', name: 'Kitty', icon: '🐱', face: FACE.kitty },
-  { id: 'bunny', name: 'Bunny', icon: '🐰', face: FACE.bunny },
-  { id: 'bear', name: 'Bear', icon: '🐻', face: FACE.bear },
-  { id: 'frog', name: 'Frog', icon: '🐸', face: FACE.frog },
-  { id: 'unicorn', name: 'Unicorn', icon: '🦄', face: FACE.unicorn },
-  { id: 'shades', name: 'Cool Shades', icon: '😎', face: FACE.shades },
-  { id: 'fancy', name: 'Fancy', icon: '🎩', face: FACE.fancy },
-  { id: 'crown', name: 'Royal', icon: '👑', face: FACE.crown },
-  { id: 'pirate', name: 'Pirate', icon: '🏴‍☠️', face: FACE.pirate },
-  { id: 'hero', name: 'Hero', icon: '🦸', face: FACE.hero },
-  { id: 'party', name: 'Party', icon: '🎉', face: FACE.party },
-  { id: 'rainbow', name: 'Rainbow Mouth', icon: '🌈', face: FACE.rainbow },
-  { id: 'bigeyes', name: 'Big Eyes', icon: '👀', face: FACE.bigeyes },
-  { id: 'bighead', name: 'Big Head', icon: '🎈', face: FACE.bighead },
-  { id: 'pixels', name: 'Pixels', icon: '🧱', world: WORLD.pixels },
-  { id: 'mirror', name: 'Mirror', icon: '🪞', world: WORLD.mirror },
-  { id: 'kaleido', name: 'Kaleidoscope', icon: '🔮', world: WORLD.kaleido },
-  { id: 'wavy', name: 'Wavy', icon: '🌊', world: WORLD.wavy },
-  { id: 'thermal', name: 'Heat Vision', icon: '🔥', world: WORLD.thermal },
-  { id: 'cartoon', name: 'Cartoon', icon: '✏️', world: WORLD.cartoon },
-  { id: 'negative', name: 'Opposite', icon: '🔁', world: WORLD.negative },
-  { id: 'oldtimey', name: 'Old Timey', icon: '🎞️', world: WORLD.oldtimey },
-  { id: 'swirl', name: 'Color Swirl', icon: '🎨', world: WORLD.swirl },
-  { id: 'popart', name: 'Pop Art', icon: '🖼️', world: WORLD.popart },
-  { id: 'glitch', name: 'Glitch', icon: '📺', world: WORLD.glitch },
+  ...tag(ANIMALS, 'animals'),
+  ...tag([
+    { id: 'puppy', name: 'Puppy', icon: '🐶', face: FACE.puppy },
+    { id: 'kitty', name: 'Kitty', icon: '🐱', face: FACE.kitty },
+    { id: 'bunny', name: 'Bunny', icon: '🐰', face: FACE.bunny },
+    { id: 'bear', name: 'Bear', icon: '🐻', face: FACE.bear },
+    { id: 'frog', name: 'Frog', icon: '🐸', face: FACE.frog },
+    { id: 'unicorn', name: 'Unicorn', icon: '🦄', face: FACE.unicorn },
+  ], 'animals'),
+  ...tag([
+    { id: 'shades', name: 'Cool Shades', icon: '😎', face: FACE.shades },
+    { id: 'fancy', name: 'Fancy', icon: '🎩', face: FACE.fancy },
+    { id: 'crown', name: 'Royal', icon: '👑', face: FACE.crown },
+    { id: 'pirate', name: 'Pirate', icon: '🏴‍☠️', face: FACE.pirate },
+    { id: 'hero', name: 'Hero', icon: '🦸', face: FACE.hero },
+    { id: 'party', name: 'Party', icon: '🎉', face: FACE.party },
+    { id: 'rainbow', name: 'Rainbow Mouth', icon: '🌈', face: FACE.rainbow },
+    { id: 'bigeyes', name: 'Big Eyes', icon: '👀', face: FACE.bigeyes },
+    { id: 'bighead', name: 'Big Head', icon: '🎈', face: FACE.bighead },
+  ], 'silly'),
+  ...tag(GAMES, 'games'),
+  ...tag(AGE, 'looks'),
+  ...tag(WIGS, 'looks'),
+  ...tag([HAIR_FILTER], 'looks'),
+  ...tag([
+    { id: 'pixels', name: 'Pixels', icon: '🧱', world: WORLD.pixels },
+    { id: 'mirror', name: 'Mirror', icon: '🪞', world: WORLD.mirror },
+    { id: 'kaleido', name: 'Kaleidoscope', icon: '🔮', world: WORLD.kaleido },
+    { id: 'wavy', name: 'Wavy', icon: '🌊', world: WORLD.wavy },
+    { id: 'thermal', name: 'Heat Vision', icon: '🔥', world: WORLD.thermal },
+    { id: 'cartoon', name: 'Cartoon', icon: '✏️', world: WORLD.cartoon },
+    { id: 'negative', name: 'Opposite', icon: '🔁', world: WORLD.negative },
+    { id: 'oldtimey', name: 'Old Timey', icon: '🎞️', world: WORLD.oldtimey },
+    { id: 'swirl', name: 'Color Swirl', icon: '🎨', world: WORLD.swirl },
+    { id: 'popart', name: 'Pop Art', icon: '🖼️', world: WORLD.popart },
+    { id: 'glitch', name: 'Glitch', icon: '📺', world: WORLD.glitch },
+  ], 'effects'),
 ];
+
+// The detector sometimes reports the same face twice; keep one of any pair whose noses sit
+// closer together than a third of a face width.
+function dedupeFaces(list) {
+  const keep = [];
+  for (const lm of list) {
+    const w = Math.hypot(lm[454].x - lm[234].x, lm[454].y - lm[234].y) || 0.01;
+    const dup = keep.some((k) => Math.hypot(k[1].x - lm[1].x, k[1].y - lm[1].y) < w * 0.34);
+    if (!dup) keep.push(lm);
+  }
+  return keep;
+}
 
 // ---------------------------------------------------------------- render loop
 function frame(now) {
@@ -550,34 +553,125 @@ function frame(now) {
   state.lastFrame = now;
   const t = now / 1000;
   const f = FILTERS[state.filterIndex];
+  const v = state.variants.get(f.id) || 0;
 
-  if (f.world) f.world(W, H, t);
+  if (f.world) f.world(W, H, t, v);
   else ctx.drawImage(video, 0, 0, W, H);
 
-  if (f.face && state.landmarker) {
+  let geoms = [];
+  if ((f.face || f.scene) && state.landmarker) {
     if (video.currentTime !== state.lastVideoTime) {
       state.lastVideoTime = video.currentTime;
       try {
         const res = state.landmarker.detectForVideo(video, now);
-        state.faces = res.faceLandmarks || [];
+        state.faces = dedupeFaces(res.faceLandmarks || []);
       } catch (e) {
         console.error('detect failed', e);
         state.faces = [];
       }
     }
-    for (const lm of state.faces) {
-      const g = faceGeometry(lm, W, H);
-      ctx.save();
-      ctx.translate(g.mid.x, g.mid.y);
-      ctx.rotate(g.angle);
-      ctx.scale(g.s, g.s);
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      f.face(ctx, g, t);
-      ctx.restore();
+    geoms = state.faces.map((lm) => faceGeometry(lm, W, H));
+    if (f.face) {
+      for (const g of geoms) {
+        ctx.save();
+        ctx.translate(g.mid.x, g.mid.y);
+        ctx.rotate(g.angle);
+        ctx.scale(g.s, g.s);
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        f.face(ctx, g, t, v);
+        ctx.restore();
+      }
     }
+  }
+  if (f.segment) ENV.hair = segmentHair(now);
+  if (f.scene) {
+    ctx.save();
+    f.scene(ctx, geoms, t, dt, W, H, v, ENV);
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
   }
   stepParticles(dt);
   debug.frames++;
+}
+
+// Things a scene filter (games, hair colour) can use. hud(text) shows text in a DOM strip above
+// the picture (DOM, because the canvas is mirrored for the front camera and text would flip);
+// say(text) is the big centred label; hair is the latest hair mask (see segmentHair).
+const ENV = {
+  video,
+  hud(text) { const el = $('hud'); if (el.textContent !== text) el.textContent = text; el.hidden = !text; },
+  say: (text) => showName(text),
+  fx: FX,
+  hair: null,
+  best(key, score) {   // per-device best score, optional convenience only
+    try {
+      const k = 'sillycam-best-' + key;
+      const prev = Number(localStorage.getItem(k) || 0);
+      if (score > prev) localStorage.setItem(k, String(score));
+      return Math.max(prev, score);
+    } catch { return score; }
+  },
+};
+
+// ---------------------------------------------------------------- hair segmentation (for hair colour)
+// Runs MediaPipe's small hair_segmenter on a downscaled frame and returns {canvas, w, h} where the
+// canvas is white where hair is (alpha from the model's confidence), transparent elsewhere.
+const hairIn = document.createElement('canvas');
+const hairInCtx = hairIn.getContext('2d', { willReadFrequently: true });
+const hairOut = document.createElement('canvas');
+const hairOutCtx = hairOut.getContext('2d');
+let hairImage = null;
+let segLastTime = -1;
+function segmentHair(now) {
+  if (state.segStatus === 'idle') loadSegmenter();
+  if (!state.segmenter) return null;
+  if (video.currentTime === segLastTime) return ENV.hair;
+  segLastTime = video.currentTime;
+  const W = video.videoWidth, H = video.videoHeight;
+  const w = 256, h = Math.max(16, Math.round((256 * H) / W));
+  if (hairIn.width !== w || hairIn.height !== h) { hairIn.width = w; hairIn.height = h; hairOut.width = w; hairOut.height = h; hairImage = hairOutCtx.createImageData(w, h); }
+  hairInCtx.drawImage(video, 0, 0, w, h);
+  try {
+    state.segmenter.segmentForVideo(hairIn, now, (result) => {
+      const masks = result.confidenceMasks;
+      if (masks && masks.length) {
+        // hair_segmenter: index 1 = hair (index 0 = background)
+        const m = masks[Math.min(1, masks.length - 1)].getAsFloat32Array();
+        const d = hairImage.data;
+        for (let i = 0, j = 0; i < m.length; i++, j += 4) {
+          const a = m[i];
+          d[j] = 255; d[j + 1] = 255; d[j + 2] = 255; d[j + 3] = a > 0.5 ? 255 : a > 0.25 ? Math.round((a - 0.25) * 1020) : 0;
+        }
+        hairOutCtx.putImageData(hairImage, 0, 0);
+      }
+      result.close();
+    });
+  } catch (e) {
+    console.error('hair segmentation failed', e);
+    return null;
+  }
+  return { canvas: hairOut, w, h };
+}
+async function loadSegmenter() {
+  state.segStatus = 'loading';
+  try {
+    const { ImageSegmenter, FilesetResolver } = await import('./vendor/vision_bundle.js');
+    const fileset = await FilesetResolver.forVisionTasks('./vendor');
+    const opts = (delegate) => ({
+      baseOptions: { modelAssetPath: './vendor/hair_segmenter.tflite', delegate },
+      runningMode: 'VIDEO',
+      outputConfidenceMasks: true,
+      outputCategoryMask: false,
+    });
+    try { state.segmenter = await ImageSegmenter.createFromOptions(fileset, opts('GPU')); }
+    catch (e) { console.warn('GPU hair segmentation unavailable, using CPU', e); state.segmenter = await ImageSegmenter.createFromOptions(fileset, opts('CPU')); }
+    state.segStatus = 'ready';
+  } catch (e) {
+    console.error('hair segmenter failed to load', e);
+    state.segStatus = 'failed';
+    toast('Hair colour is not available right now.', 3000);
+  }
 }
 
 // ---------------------------------------------------------------- model
@@ -591,6 +685,10 @@ async function loadModel() {
       baseOptions: { modelAssetPath: './vendor/face_landmarker.task', delegate },
       runningMode: 'VIDEO',
       numFaces: 3,
+      // 0.3 (default 0.5) finds the smaller faces of two or three kids sharing the frame; the
+      // presence check stays at 0.5 so a lowered detector does not add ghost faces.
+      minFaceDetectionConfidence: 0.3,
+      minFacePresenceConfidence: 0.5,
       outputFaceBlendshapes: false,
       outputFacialTransformationMatrixes: false,
     });
@@ -685,6 +783,26 @@ function showName(name) {
   clearTimeout(nameTimer);
   nameTimer = setTimeout(() => el.classList.remove('show'), 1400);
 }
+function buildTabs() {
+  const row = $('tabs');
+  row.innerHTML = '';
+  for (const [group, icon, label] of GROUPS) {
+    const first = FILTERS.findIndex((f) => f.group === group);
+    if (first < 0) continue;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'tab'; b.id = 'tab-' + group;
+    b.innerHTML = `<span aria-hidden="true">${icon}</span> ${label}`;
+    b.addEventListener('click', () => setFilter(first));
+    row.appendChild(b);
+  }
+}
+function updateTabs() {
+  const g = FILTERS[state.filterIndex].group;
+  for (const [group] of GROUPS) {
+    const b = $('tab-' + group);
+    if (b) b.classList.toggle('active', group === g);
+  }
+}
 function buildChips() {
   const box = $('chips');
   box.innerHTML = '';
@@ -692,7 +810,10 @@ function buildChips() {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip'; b.id = 'chip-' + f.id; b.setAttribute('role', 'tab');
     b.innerHTML = `<span class="ico" aria-hidden="true">${f.icon}</span><span class="lbl">${f.name}</span>`;
-    b.addEventListener('click', () => setFilter(i));
+    b.addEventListener('click', () => {
+      if (i === state.filterIndex && f.variants && f.variants.length > 1) nextVariant();
+      else setFilter(i);
+    });
     box.appendChild(b);
   });
   updateChips();
@@ -703,23 +824,39 @@ function updateChips() {
     const b = $('chip-' + f.id);
     if (!b) return;
     b.classList.toggle('active', i === state.filterIndex);
-    b.classList.toggle('waiting', !!f.face && waiting);
+    b.classList.toggle('waiting', !!(f.face || f.scene) && waiting);
     b.setAttribute('aria-selected', i === state.filterIndex ? 'true' : 'false');
   });
 }
+function filterLabel(f) {
+  const v = state.variants.get(f.id) || 0;
+  return f.variants && f.variants.length > 1 ? `${f.name}: ${f.variants[v]}` : f.name;
+}
+function nextVariant() {
+  const f = FILTERS[state.filterIndex];
+  const v = ((state.variants.get(f.id) || 0) + 1) % f.variants.length;
+  state.variants.set(f.id, v);
+  if (f.reset) f.reset(v);
+  showName(filterLabel(f));
+}
 function setFilter(i) {
   const n = FILTERS.length;
+  const prev = FILTERS[state.filterIndex];
   state.filterIndex = ((i % n) + n) % n;
   clearParticles();
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
+  ENV.hud('');
   const f = FILTERS[state.filterIndex];
+  if (prev !== f && f.reset) f.reset(state.variants.get(f.id) || 0);
   updateChips();
-  showName(f.name);
+  updateTabs();
+  showName(filterLabel(f));
   const b = $('chip-' + f.id);
   if (b && b.scrollIntoView) b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
-  if (f.face && state.modelStatus === 'loading') toast('Getting the face magic ready…', 2500);
-  if (f.face && state.modelStatus === 'failed') toast('Face filters are not available right now.', 2500);
+  if ((f.face || f.scene) && state.modelStatus === 'loading') toast('Getting the face magic ready…', 2500);
+  else if ((f.face || f.scene) && state.modelStatus === 'failed') toast('Face filters are not available right now.', 2500);
+  else if (f.variants && f.variants.length > 1 && !state.variantHintShown) { state.variantHintShown = true; toast('Tap the same button again for more!', 2500); }
 }
 
 function setupSwipe() {
@@ -835,13 +972,19 @@ window.__sillycam = {
   get debug() { return debug; },
   filters: FILTERS.map((f) => f.id),
   setFilter: (id) => setFilter(FILTERS.findIndex((f) => f.id === id)),
+  nextVariant,
+  variantCounts: () => FILTERS.map((f) => [f.id, f.variants ? f.variants.length : 1]),
   faceCount: () => state.faces.length,
 };
 
 // ---------------------------------------------------------------- boot
+buildTabs();
 buildChips();
+updateTabs();
 setupSwipe();
 $('startBtn').addEventListener('click', start);
+$('startBtn').textContent = "Let's go!";
+$('startBtn').disabled = false;
 $('flipBtn').addEventListener('click', flip);
 $('snapBtn').addEventListener('click', snap);
 $('saveBtn').addEventListener('click', savePhoto);

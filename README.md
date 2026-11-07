@@ -9,7 +9,7 @@ and the page makes no network requests after it loads. No account, no uploads, n
 | Path | Purpose |
 | --- | --- |
 | `site/index.html`, `site/style.css`, `site/app.js` | The whole app. Filters live in `app.js` (`FACE` and `WORLD` tables). |
-| `site/vendor/` | MediaPipe Tasks Vision 1.2.2 (ESM bundle + WebAssembly) and the `face_landmarker.task` model. Apache-2.0, Google. |
+| `site/vendor/` | MediaPipe Tasks Vision 1.2.2 (ESM bundle + WebAssembly), the `face_landmarker.task` model and the `hair_segmenter.tflite` model. Apache-2.0, Google. One patch in `vision_bundle.js`: the usage-logging client's `flush()` is a no-op, so the library never posts telemetry to `odml.pa.googleapis.com` (the page's Content-Security-Policy blocks it as well). Re-apply after any upgrade. |
 | `site/sw.js`, `site/manifest.webmanifest`, `site/icons/` | Offline cache and Add-to-Home-Screen support. |
 | `site/_headers` | Netlify-only headers (the same Content-Security-Policy is also a meta tag in `index.html`). |
 | `.github/workflows/pages.yml` | Publishes `site/` to GitHub Pages on push to `main`. |
@@ -68,8 +68,20 @@ This serves `site/`, feeds Chromium a fake camera clip made from a portrait phot
 filter, screenshots each one into `test/shots/`, takes a photo, checks the offline cache filled, and
 fails if the page makes any request to a host other than the test server.
 
+## Filters
+
+The chip strip is grouped by the tab row: Animals (full-face masks in `site/filters-animals.js` plus
+the ear-and-nose props), Silly (props), Games (`site/games.js`: Ring Nose, Snack Catch, Dodge; 30-second
+rounds, any face in frame can play), Looks (`site/filters-age.js`: Grandpa, Grandma, Baby; Wigs in
+`site/filters-wigs.js`; Hair Colour, which recolours real hair with MediaPipe's hair segmenter) and
+Effects (whole-picture effects). Up to three faces are tracked at once.
+
+A filter with `variants: [...]` cycles through them when its chip is tapped again (Wigs, Hair Colour).
+
 ## Adding a filter
 
-Add a function to `FACE` (drawn in face units: origin between the eyes, 1 unit = face width, +y down)
-or `WORLD` (receives the canvas width, height and time), then add a row to `FILTERS` with an emoji
-and a name.
+Face filters draw in face units (origin between the eyes, 1 unit = face width, +y down) with the
+helpers in `site/draw.js`; whole-picture effects receive the canvas width, height and time; games and
+other scene filters implement `scene(ctx, faces, t, dt, W, H, variant, env)` and use `env.hud(text)`
+for the score strip (DOM, because the canvas is mirrored). Add the object to the matching pack file or
+to `FILTERS` in `app.js`, and add any new file to the lists in `sw.js`.

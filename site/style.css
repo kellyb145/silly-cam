@@ -103,6 +103,28 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- game score strip (DOM, so it is not mirrored with the canvas) ---------- */
+.hud {
+  position: absolute;
+  left: 50%;
+  top: calc(76px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: none;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(15,13,26,0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.35rem;
+  color: var(--sun);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 0 rgba(0,0,0,0.5);
+}
+
 /* ---------- start screen ---------- */
 .start {
   position: absolute; inset: 0;
@@ -185,6 +207,31 @@ body {
   transition: opacity 0.3s;
 }
 .name.show { opacity: 1; }
+.tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  touch-action: pan-x;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.9rem;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,0.3);
+  background: rgba(15,13,26,0.55);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab.active { background: var(--bubble); border-color: #fff; color: #fff; }
+.tab:focus-visible { outline: 3px solid var(--sky); outline-offset: 2px; }
 .chips {
   display: flex;
   gap: 10px;

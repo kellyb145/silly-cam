@@ -8,10 +8,24 @@ no uploads. Keep it that way: no fonts, CDNs, images or share targets from other
 
 - `site/` is the whole deployable page: `index.html`, `style.css`, `app.js`, `sw.js`,
   `manifest.webmanifest`, `_headers`, `icons/`, `vendor/` (MediaPipe Tasks Vision 1.2.2 ESM bundle,
-  its WASM loader and `face_landmarker.task`, all Apache-2.0 from Google, unmodified).
+  its WASM loader, `face_landmarker.task` and `hair_segmenter.tflite`, all Apache-2.0 from Google).
+- `vendor/vision_bundle.js` carries ONE patch: the telemetry client's `flush(t,e){` now starts with
+  `this.i=[];t?.();return;` so MediaPipe never posts usage logs to `odml.pa.googleapis.com` (found
+  2026-11-07 when the segmenter triggered it; the CSP blocked it, the patch removes the attempt).
+  Any MediaPipe upgrade must re-apply it and re-run the harness, which fails on a CSP violation.
 - `test/` is the Playwright end-to-end check. It is not deployed.
-- Filters are two tables in `site/app.js`: `FACE` (drawn in face units: origin between the eyes,
-  1 unit = face width, +y down) and `WORLD` (whole-picture effects). Add a row to `FILTERS` to show one.
+- `site/app.js` is the engine (camera, face tracking, render loop, chips, tabs, hair segmentation);
+  `site/draw.js` holds the shared drawing helpers and documents the face-unit coordinate system.
+  Filter packs are separate files loaded with a tolerant dynamic import (a broken pack is skipped,
+  the page still runs): `filters-animals.js` (full-face masks), `games.js` (scene filters with a
+  score strip), `filters-age.js` (Grandpa/Grandma/Baby), `filters-wigs.js` (one filter with variants).
+  Built-in props and whole-picture effects stay in `app.js` (`FACE`, `WORLD`), and `FILTERS` assigns
+  every filter a group for the tab row.
+- Filter object shape: `{ id, name, icon, group, face(c,g,t,v) | world(W,H,t,v) | scene(c,faces,t,dt,W,H,v,env), variants?, reset?(v), segment? }`.
+  Tapping the active chip cycles `variants`. `segment: true` runs the hair segmenter and puts the
+  mask in `env.hair`.
+- The harness takes `SILLYCAM_FILTERS=a,b` (subset), `SILLYCAM_SHOTS=dir`, `SILLYCAM_VARIANTS=1`,
+  `SILLYCAM_FACES=2` (two faces in the fake camera) and `SILLYCAM_URL=https://…` (test a deployed copy).
 
 ## Commands
 

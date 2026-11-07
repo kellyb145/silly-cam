@@ -23,6 +23,8 @@
 <canvas id="stage" aria-label="Camera view with the chosen filter"></canvas>
 <div id="flash" aria-hidden="true"></div>
 
+<div id="hud" class="hud" aria-live="polite" hidden></div>
+
 <header class="topbar" id="topbar" hidden>
   <div class="brand">Silly Cam</div>
   <div class="topbtns">
@@ -36,7 +38,7 @@
     <div class="bigface" aria-hidden="true">🤪</div>
     <h1>Silly Cam</h1>
     <p class="lead">Tap the button to turn on the camera, then pick a silly filter.</p>
-    <button id="startBtn" class="gobtn" type="button">Let's go!</button>
+    <button id="startBtn" class="gobtn" type="button" disabled>Loading…</button>
     <p id="startMsg" class="startmsg" hidden></p>
     <p class="privacy">Everything happens on this device. No account, no uploads. A picture is only kept if you choose to save it.</p>
     <details class="grownups">
@@ -44,6 +46,7 @@
       <p>This page uses the camera only to draw filters on the screen. Video never leaves the device, and the page makes no requests to any other website. The face-tracking model is a file that downloads with the page and runs locally.</p>
       <p>On an iPhone or iPad, open this page in Safari, tap the Share button, then <strong>Add to Home Screen</strong>. It then opens full-screen like an app. Open it from the icon once while online, and after that it keeps working without internet.</p>
       <p>Face filters need iOS 16.4 or newer. On older devices the picture filters still work.</p>
+      <p>Up to three faces are tracked at once, but the tracker needs faces fairly close to the camera. If a face is missed, lean in together.</p>
       <p>"Save picture" opens the normal iOS share sheet, where <strong>Save Image</strong> puts the picture in Photos. Nothing is saved unless you do that.</p>
       <p>If the camera button does nothing, check Settings &gt; Apps &gt; Safari &gt; Camera, and allow it for this site.</p>
     </details>
@@ -61,6 +64,7 @@
 
 <footer class="dock" id="dock" hidden>
   <div id="name" class="name" aria-live="polite"></div>
+  <div id="tabs" class="tabs" aria-label="Filter groups"></div>
   <div id="chips" class="chips" role="tablist" aria-label="Filters"></div>
 </footer>
 
