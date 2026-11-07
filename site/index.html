@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Silly Cam</title>
+<meta name="description" content="Kid-friendly camera filters that run only on this device. Nothing is uploaded.">
+<meta name="theme-color" content="#0f0d1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Silly Cam">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; font-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="stage" aria-label="Camera view with the chosen filter"></canvas>
+<div id="flash" aria-hidden="true"></div>
+
+<header class="topbar" id="topbar" hidden>
+  <div class="brand">Silly Cam</div>
+  <div class="topbtns">
+    <button id="flipBtn" class="roundbtn" type="button" aria-label="Switch camera" title="Switch camera">🔄</button>
+    <button id="snapBtn" class="roundbtn snap" type="button" aria-label="Take a picture" title="Take a picture">📸</button>
+  </div>
+</header>
+
+<main id="start" class="start">
+  <div class="startcard">
+    <div class="bigface" aria-hidden="true">🤪</div>
+    <h1>Silly Cam</h1>
+    <p class="lead">Tap the button to turn on the camera, then pick a silly filter.</p>
+    <button id="startBtn" class="gobtn" type="button">Let's go!</button>
+    <p id="startMsg" class="startmsg" hidden></p>
+    <p class="privacy">Everything happens on this device. No account, no uploads. A picture is only kept if you choose to save it.</p>
+    <details class="grownups">
+      <summary>For grown-ups</summary>
+      <p>This page uses the camera only to draw filters on the screen. Video never leaves the device, and the page makes no requests to any other website. The face-tracking model is a file that downloads with the page and runs locally.</p>
+      <p>On an iPhone or iPad, open this page in Safari, tap the Share button, then <strong>Add to Home Screen</strong>. It then opens full-screen like an app. Open it from the icon once while online, and after that it keeps working without internet.</p>
+      <p>Face filters need iOS 16.4 or newer. On older devices the picture filters still work.</p>
+      <p>"Save picture" opens the normal iOS share sheet, where <strong>Save Image</strong> puts the picture in Photos. Nothing is saved unless you do that.</p>
+      <p>If the camera button does nothing, check Settings &gt; Apps &gt; Safari &gt; Camera, and allow it for this site.</p>
+    </details>
+  </div>
+</main>
+
+<section id="photo" class="photo" hidden>
+  <img id="photoImg" alt="Your picture">
+  <div class="photobtns">
+    <button id="saveBtn" class="pillbtn" type="button">Save picture</button>
+    <button id="backBtn" class="pillbtn ghost" type="button">Back to playing</button>
+  </div>
+  <p id="saveHint" class="savehint" hidden>Press and hold the picture to save it.</p>
+</section>
+
+<footer class="dock" id="dock" hidden>
+  <div id="name" class="name" aria-live="polite"></div>
+  <div id="chips" class="chips" role="tablist" aria-label="Filters"></div>
+</footer>
+
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
