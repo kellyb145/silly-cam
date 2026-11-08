@@ -1,7 +1,7 @@
 // Silly Cam offline cache. Bump VERSION whenever any file changes so devices pick up the update.
 // Kill switch: to retire the cache on every device, deploy an sw.js whose install handler calls
 // self.registration.unregister() and deletes all caches (see README).
-const VERSION = 'silly-cam-v2';
+const VERSION = 'silly-cam-v3';
 const NETWORK_TIMEOUT_MS = 3000;
 const SMALL = [
   './', './index.html', './style.css', './app.js', './draw.js', './games.js',

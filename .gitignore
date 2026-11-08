@@ -3,3 +3,4 @@ test/shots*/
 test/*.mjpeg
 test/portrait.jpg
 .netlify/
+test/scenes/

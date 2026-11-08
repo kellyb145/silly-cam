@@ -34,6 +34,7 @@ const state = {
   modelStatus: 'idle',      // idle | loading | ready | failed
   segmenter: null,
   segStatus: 'idle',        // the hair model loads only when a hair filter is first picked
+  segSize: 256,             // width of the frame handed to the hair model (its own input is 512x512)
   variants: new Map(),      // filter id -> chosen variant index
   variantHintShown: false,
   filterIndex: 0,
@@ -455,7 +456,7 @@ const HAIR_FILTER = {
   variants: HAIR_COLOURS.map((h) => h[0]),
   scene(c, geoms, t, dt, W, H, v, env) {
     if (!env.hair) { if (state.segStatus === 'loading') env.hud('Getting the hair magic ready…'); return; }
-    env.hud('');
+    env.hud(geoms.length ? '' : 'Come closer so I can see your face');
     const m = env.hair;
     // Build a coloured copy of the mask, then blend it onto the picture so only hair changes.
     const tint = document.createElement('canvas'); tint.width = m.w; tint.height = m.h;
@@ -583,7 +584,7 @@ function frame(now) {
       }
     }
   }
-  if (f.segment) ENV.hair = segmentHair(now);
+  if (f.segment) ENV.hair = segmentHair(now, geoms);
   if (f.scene) {
     ctx.save();
     f.scene(ctx, geoms, t, dt, W, H, v, ENV);
@@ -617,19 +618,67 @@ const ENV = {
 // ---------------------------------------------------------------- hair segmentation (for hair colour)
 // Runs MediaPipe's small hair_segmenter on a downscaled frame and returns {canvas, w, h} where the
 // canvas is white where hair is (alpha from the model's confidence), transparent elsewhere.
+// The model confidently calls dark clothing, dark furniture and shadows "hair" (measured 2026-11-08 on
+// five real scenes: up to a quarter of the mask landed away from any head, a 512 input changed nothing,
+// and a stricter confidence cut removed real hair as fast as the spill). Hair can only be where a head
+// is, so gateHair() keeps the mask inside a soft zone around each detected face and cuts the neck and
+// chest line out. No face in view means no colour (a short grace covers a missed frame).
 const hairIn = document.createElement('canvas');
 const hairInCtx = hairIn.getContext('2d', { willReadFrequently: true });
 const hairOut = document.createElement('canvas');
 const hairOutCtx = hairOut.getContext('2d');
 let hairImage = null;
 let segLastTime = -1;
-function segmentHair(now) {
+const gate = document.createElement('canvas');
+const gateCtx = gate.getContext('2d');
+let gateSeenAt = -1e9;
+const GATE_GRACE_MS = 700;
+function softBlob(c, cx, cy, rx, ry) {   // ellipse, solid to 78% of its radius then fading to nothing
+  c.save(); c.translate(cx, cy); c.scale(rx, ry);
+  const gr = c.createRadialGradient(0, 0, 0, 0, 0, 1);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.78, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = gr; c.beginPath(); c.arc(0, 0, 1, 0, TAU); c.fill();
+  c.restore();
+}
+function gateHair(geoms, w, h, now) {
+  if (geoms.length) {
+    gateSeenAt = now;
+    if (gate.width !== w || gate.height !== h) { gate.width = w; gate.height = h; }
+    gateCtx.clearRect(0, 0, w, h);
+    const k = w / geoms[0].W;                     // mask pixels per video pixel
+    const inFace = (g, draw) => { gateCtx.save(); gateCtx.translate(g.mid.x * k, g.mid.y * k); gateCtx.rotate(g.angle); gateCtx.scale(g.s * k, g.s * k); draw(g); gateCtx.restore(); };
+    for (const g of geoms) inFace(g, () => {
+      // A turned head shows a narrower face while the head extends behind it: the nose offset says
+      // which way, so the zone shifts to the back of the head and grows with the turn.
+      const yaw = Math.max(-0.4, Math.min(0.4, g.nose.x));
+      const grow = 1 + Math.abs(yaw);
+      softBlob(gateCtx, -yaw * 1.2, -0.2, 1.2 * grow, 1.25 * grow);   // hair volume around the head
+      softBlob(gateCtx, -yaw * 0.8, 1.5, 1.35 * grow, 2.2);           // hair hanging down to the shoulders and chest
+    });
+    gateCtx.globalCompositeOperation = 'destination-out';
+    for (const g of geoms) inFace(g, () => {        // the neck and the middle of the chest are never hair
+      const gr = gateCtx.createLinearGradient(-0.5, 0, 0.5, 0);
+      gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.35, 'rgba(0,0,0,1)'); gr.addColorStop(0.65, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      gateCtx.fillStyle = gr;
+      const top = g.chin.y + 0.05;
+      gateCtx.beginPath(); gateCtx.moveTo(-0.3, top); gateCtx.lineTo(0.3, top); gateCtx.lineTo(0.55, 3.8); gateCtx.lineTo(-0.55, 3.8); gateCtx.closePath(); gateCtx.fill();
+    });
+    gateCtx.globalCompositeOperation = 'source-over';
+  } else if (now - gateSeenAt > GATE_GRACE_MS || gate.width !== w || gate.height !== h) {
+    hairOutCtx.clearRect(0, 0, w, h);
+    return;
+  }
+  hairOutCtx.globalCompositeOperation = 'destination-in';
+  hairOutCtx.drawImage(gate, 0, 0);
+  hairOutCtx.globalCompositeOperation = 'source-over';
+}
+function segmentHair(now, geoms) {
   if (state.segStatus === 'idle') loadSegmenter();
   if (!state.segmenter) return null;
   if (video.currentTime === segLastTime) return ENV.hair;
   segLastTime = video.currentTime;
   const W = video.videoWidth, H = video.videoHeight;
-  const w = 256, h = Math.max(16, Math.round((256 * H) / W));
+  const w = state.segSize, h = Math.max(16, Math.round((w * H) / W));
   if (hairIn.width !== w || hairIn.height !== h) { hairIn.width = w; hairIn.height = h; hairOut.width = w; hairOut.height = h; hairImage = hairOutCtx.createImageData(w, h); }
   hairInCtx.drawImage(video, 0, 0, w, h);
   try {
@@ -638,12 +687,14 @@ function segmentHair(now) {
       if (masks && masks.length) {
         // hair_segmenter: index 1 = hair (index 0 = background)
         const m = masks[Math.min(1, masks.length - 1)].getAsFloat32Array();
+        if (debug.keepHairConf) debug.hairConf = { w, h, data: Float32Array.from(m) };   // test harness only
         const d = hairImage.data;
         for (let i = 0, j = 0; i < m.length; i++, j += 4) {
           const a = m[i];
           d[j] = 255; d[j + 1] = 255; d[j + 2] = 255; d[j + 3] = a > 0.5 ? 255 : a > 0.25 ? Math.round((a - 0.25) * 1020) : 0;
         }
         hairOutCtx.putImageData(hairImage, 0, 0);
+        gateHair(geoms, w, h, now);
       }
       result.close();
     });
@@ -973,6 +1024,7 @@ window.__sillycam = {
   filters: FILTERS.map((f) => f.id),
   setFilter: (id) => setFilter(FILTERS.findIndex((f) => f.id === id)),
   nextVariant,
+  get env() { return ENV; },
   variantCounts: () => FILTERS.map((f) => [f.id, f.variants ? f.variants.length : 1]),
   faceCount: () => state.faces.length,
 };

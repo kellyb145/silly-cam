@@ -14,6 +14,7 @@ and the page makes no network requests after it loads. No account, no uploads, n
 | `site/_headers` | Netlify-only headers (the same Content-Security-Policy is also a meta tag in `index.html`). |
 | `.github/workflows/pages.yml` | Publishes `site/` to GitHub Pages on push to `main`. |
 | `test/run.mjs` | End-to-end check with a fake camera (see below). Not deployed. |
+| `test/hairdiag.mjs` | Hair Colour check: five real scenes through the fake camera, reporting how much of the hair mask lands away from any head. Not deployed. |
 
 ## Hosting
 
@@ -73,8 +74,9 @@ fails if the page makes any request to a host other than the test server.
 The chip strip is grouped by the tab row: Animals (full-face masks in `site/filters-animals.js` plus
 the ear-and-nose props), Silly (props), Games (`site/games.js`: Ring Nose, Snack Catch, Dodge; 30-second
 rounds, any face in frame can play), Looks (`site/filters-age.js`: Grandpa, Grandma, Baby; Wigs in
-`site/filters-wigs.js`; Hair Colour, which recolours real hair with MediaPipe's hair segmenter) and
-Effects (whole-picture effects). Up to three faces are tracked at once.
+`site/filters-wigs.js`; Hair Colour, which recolours real hair with MediaPipe's hair segmenter, kept to
+a zone around each tracked face so dark clothes and furniture stay their own colour) and Effects
+(whole-picture effects). Up to three faces are tracked at once.
 
 A filter with `variants: [...]` cycles through them when its chip is tapped again (Wigs, Hair Colour).
 
