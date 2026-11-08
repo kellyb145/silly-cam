@@ -19,8 +19,21 @@ no uploads. Keep it that way: no fonts, CDNs, images or share targets from other
   Filter packs are separate files loaded with a tolerant dynamic import (a broken pack is skipped,
   the page still runs): `filters-animals.js` (full-face masks), `games.js` (scene filters with a
   score strip), `filters-age.js` (Grandpa/Grandma/Baby), `filters-wigs.js` (one filter with variants).
+  `filters-photo.js` is the photo animal pack: a real animal picture (`animals/*.webp`, transparent
+  background, chest faded out) stretched over the tracked face mesh by `mesh.js` (WebGL; `facemesh.json`
+  is MediaPipe's canonical mesh with the eye and inner-mouth triangles removed so the real eyes and mouth
+  show through), plus the whole head drawn flat behind it, lined up on the eyes. Each animal carries nine
+  hand-read alignment points (eyes, nose, mouth corners, chin, top, face sides) that a thin-plate spline
+  turns into per-landmark texture coordinates.
   Built-in props and whole-picture effects stay in `app.js` (`FACE`, `WORLD`), and `FILTERS` assigns
   every filter a group for the tab row.
+- Adding a photo animal: generate a front-facing, symmetric portrait on a plain light background
+  (Canva `generate-image` worked; its free plan has no background remover and hands back 200 px
+  previews, so full size comes from placing the media on a design page and `export-design`), run
+  `node test/tools/key.mjs in.png site/animals/<name> <chinY>` (flat background keyed out, 512 px WebP),
+  read the nine points off `node test/tools/grid.mjs grid.png in.png`, add a `DEFS` entry in
+  `filters-photo.js`, list the WebP in `sw.js` BIG (and raise the harness's cache count), add the id to
+  the harness `faceIds`, then run `SILLYCAM_FILTERS=photo-<name> node test/run.mjs` and look at the shot.
 - Filter object shape: `{ id, name, icon, group, face(c,g,t,v) | world(W,H,t,v) | scene(c,faces,t,dt,W,H,v,env), variants?, reset?(v), segment? }`.
   Tapping the active chip cycles `variants`. `segment: true` runs the hair segmenter and puts the
   mask in `env.hair`.

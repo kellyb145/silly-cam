@@ -53,7 +53,7 @@ if (!fs.existsSync(PORTRAIT)) {
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.wasm': 'application/wasm', '.task': 'application/octet-stream', '.webmanifest': 'application/manifest+json',
-  '.png': 'image/png', '.json': 'application/json', '.md': 'text/markdown',
+  '.png': 'image/png', '.webp': 'image/webp', '.json': 'application/json', '.md': 'text/markdown', '.tflite': 'application/octet-stream',
 };
 // Apply site/_headers the way Netlify does, so the Content-Security-Policy is exercised here too.
 function loadHeaderRules() {
@@ -206,7 +206,8 @@ for (const id of filters) {
 }
 console.table(results.map((r) => ({ id: r.id, faces: r.faces, frames: r.framesDrawn })));
 const faceIds = ['puppy', 'kitty', 'bunny', 'shades', 'crown', 'rainbow', 'bigeyes', 'bighead',
-  'fox', 'catface', 'tiger', 'panda', 'lion', 'dogface', 'grandpa', 'grandma', 'baby', 'wigs', 'haircolor'];
+  'fox', 'catface', 'tiger', 'panda', 'lion', 'dogface', 'grandpa', 'grandma', 'baby', 'wigs', 'haircolor',
+  'photo-fox', 'photo-chihuahua', 'photo-cat', 'photo-tiger'];
 for (const r of results) {
   if (r.framesDrawn < 5) problems.push(`filter ${r.id} drew only ${r.framesDrawn} frames`);
   if (faceIds.includes(r.id) && r.faces < 1) problems.push(`filter ${r.id} found no face`);
@@ -230,7 +231,7 @@ const sw = await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     for (let i = 0; i < 60; i++) {
       const keys = await caches.keys();
-      if (keys.length) { const c = await caches.open(keys[0]); const ks = await c.keys(); if (ks.length >= 18) return { ready: true, cache: keys[0], entries: ks.length }; }
+      if (keys.length) { const c = await caches.open(keys[0]); const ks = await c.keys(); if (ks.length >= 25) return { ready: true, cache: keys[0], entries: ks.length }; }
       await new Promise((r) => setTimeout(r, 500));
     }
     return { ready: true, cache: 'incomplete' };

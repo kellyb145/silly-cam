@@ -16,6 +16,7 @@ const ANIMALS = await pack('./filters-animals.js', 'ANIMALS');
 const GAMES = await pack('./games.js', 'GAMES');
 const AGE = await pack('./filters-age.js', 'AGE');
 const WIGS = await pack('./filters-wigs.js', 'WIGS');
+const PHOTO = await pack('./filters-photo.js', 'PHOTO');
 
 const $ = (id) => document.getElementById(id);
 const video = $('cam');
@@ -120,6 +121,7 @@ function faceGeometry(lm, W, H) {
     lipTop: local(lipTop),
     mouth: { c: local({ x: (lipTop.x + lipBot.x) / 2, y: (lipTop.y + lipBot.y) / 2 }), open, w: Math.hypot(mR.x - mL.x, mR.y - mL.y) / s },
     hair: local(P(10)), chin: local(P(152)),
+    lm,                                                      // the raw landmarks (normalised), for mesh filters
   };
 }
 
@@ -493,6 +495,7 @@ const GROUPS = [
 const tag = (list, group) => list.map((f) => ({ ...f, group }));
 const FILTERS = [
   { id: 'normal', name: 'Just Me', icon: '🙂' },
+  ...tag(PHOTO, 'animals'),
   ...tag(ANIMALS, 'animals'),
   ...tag([
     { id: 'puppy', name: 'Puppy', icon: '🐶', face: FACE.puppy },

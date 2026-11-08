@@ -10,11 +10,13 @@ and the page makes no network requests after it loads. No account, no uploads, n
 | --- | --- |
 | `site/index.html`, `site/style.css`, `site/app.js` | The whole app. Filters live in `app.js` (`FACE` and `WORLD` tables). |
 | `site/vendor/` | MediaPipe Tasks Vision 1.2.2 (ESM bundle + WebAssembly), the `face_landmarker.task` model and the `hair_segmenter.tflite` model. Apache-2.0, Google. One patch in `vision_bundle.js`: the usage-logging client's `flush()` is a no-op, so the library never posts telemetry to `odml.pa.googleapis.com` (the page's Content-Security-Policy blocks it as well). Re-apply after any upgrade. |
+| `site/mesh.js`, `site/facemesh.json`, `site/filters-photo.js`, `site/animals/` | Photo animal faces: a real animal picture stretched over the tracked face mesh with WebGL. `facemesh.json` is MediaPipe's canonical face mesh (Apache-2.0). The pictures were generated with Canva and keyed to transparent WebP. |
 | `site/sw.js`, `site/manifest.webmanifest`, `site/icons/` | Offline cache and Add-to-Home-Screen support. |
 | `site/_headers` | Netlify-only headers (the same Content-Security-Policy is also a meta tag in `index.html`). |
 | `.github/workflows/pages.yml` | Publishes `site/` to GitHub Pages on push to `main`. |
 | `test/run.mjs` | End-to-end check with a fake camera (see below). Not deployed. |
 | `test/hairdiag.mjs` | Hair Colour check: five real scenes through the fake camera, reporting how much of the hair mask lands away from any head. Not deployed. |
+| `test/tools/` | Helpers for adding a photo animal: `grid.mjs` (labelled grid to read alignment points off a picture), `key.mjs` (keys a flat background out and writes the 512 px WebP), `facemesh-build.mjs` (canonical mesh `.obj` to `facemesh.json`). |
 
 ## Hosting
 
@@ -71,8 +73,10 @@ fails if the page makes any request to a host other than the test server.
 
 ## Filters
 
-The chip strip is grouped by the tab row: Animals (full-face masks in `site/filters-animals.js` plus
-the ear-and-nose props), Silly (props), Games (`site/games.js`: Ring Nose, Snack Catch, Dodge; 30-second
+The chip strip is grouped by the tab row: Animals (the "Real" animals in `site/filters-photo.js`, which
+stretch a photo of a fox, chihuahua, cat or tiger over the tracked face so it moves with the mouth and
+brows while the child's own eyes and mouth show through; the drawn full-face masks in
+`site/filters-animals.js`; and the ear-and-nose props), Silly (props), Games (`site/games.js`: Ring Nose, Snack Catch, Dodge; 30-second
 rounds, any face in frame can play), Looks (`site/filters-age.js`: Grandpa, Grandma, Baby; Wigs in
 `site/filters-wigs.js`; Hair Colour, which recolours real hair with MediaPipe's hair segmenter, kept to
 a zone around each tracked face so dark clothes and furniture stay their own colour) and Effects
